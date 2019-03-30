@@ -1,0 +1,287 @@
+---
+title: 'Homework #3: SDGB-7844'
+author: "Qing Chen"
+fordham_id_number: "A16799160"
+fordham_email: "qchen97@fordham.edu"
+date: "3/28/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 1. At what level (State, County, City) is the American Community Survey data available? How is this different than the deccenial census?
+
+```{r}
+library(maptools)
+library(RColorBrewer)
+library(rgdal)
+library(sp)
+library(maps)
+library(tidyverse)
+library(tidycensus)
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(leaflet)
+
+'"State" and "County" levels are availiable for ACS.
+It is different from deccenial census, becuase get_acs() can be used
+in more geography than get_decennial, such as "us","region" and "division."'
+
+```
+
+### 2. What variable and variable codes are available to describe race and ethnicity in the US Census? Describe how these variables are represented in the data (Variables: B2001_001-B2001_006 & B03002_001- B03002_002 & B03002_012).
+```{r}
+
+v15 <- load_variables(2016, "acs5", cache = TRUE)
+'
+# Race #
+B02001_001 :Total Race
+B02001_002 :White Alone Race
+B02001_003 :Black or African American alone
+B02001_004 :American Indian and Alaska Native alone
+B02001_005 :Asian alone
+B02001_006 :Native Hawaiian and Other Pacific Islander alone
+
+# Ethnicity #
+B03002_001 :Total
+B03002_002 :Not Hispanic or Latino
+B03002_012 :Hispanic or Latino
+'
+
+
+```
+
+### 3. How does the American Community Survey define race and ethnicity? Is this important information to report under assumptions for your analysis?
+```{r}
+
+# Race: The Census Bureau defines race as a person's self-identification with one or more social groups.An individual can report as White, Black or AfricanAmerican, Asian, American Indian and Alaska Native,Native Hawaiian and Other Pacific Islander, or someother race. Survey respondents may reportmultiple races.
+# 
+# Ethnicity: it determines whether a person is of Hispanic origin or not. For this reason, ethnicity is broken outin two categories, Hispanic or Latino and NotHispanic or Latino. Hispanics may report as any race
+# 
+# It is important information to report, because the analysis assumption has the same definition as ACS, whose dataset, therefore, can be used.
+
+```
+
+### 4. Does the American Community Survey provide the margin of error for their estimates of the proportion
+of the prevalence of each race and ethnicity? How might this impact the validity of our results?
+
+
+```{r}
+ 
+'Yes, ACS provide the margin of error (moe) for estimates. as the ACS is based on an annual sample of around 3 million households.
+Also, the margin of error expresses the maximum expected difference between the true population parameter and a sample estimate of that parameter. So the lower margin of error, the higher validaty of result be.'
+
+```
+
+### 5. Use the tidycensus API to assign the race and ethnicity data for New York, New Jersey and Connecticut
+(at the County level) to a data frame.
+
+```{r}
+# New York
+
+var_re <- c('B02001_001','B02001_002', 'B02001_003','B02001_004','B02001_005','B02001_006','B03002_001','B03002_002','B03002_012')
+NY <- get_acs(geography = "county", variables =var_re, state='NY')
+
+NJ <- get_acs(geography = "county", variables =var_re, state='NJ')
+
+CT <- get_acs(geography = "county", variables =var_re, state='CT')
+
+class(NY)
+```
+
+
+## Computing The USA Today Diversity Index
+
+```{r}
+# Step1
+US <- get_acs(geography = "county", variables =var_re, geometry = TRUE)
+
+
+drop <- c('moe')
+us_nomoe <- US[,!(names(US)%in%drop)]
+rect_data <- us_nomoe %>% 
+  spread(variable, estimate)
+
+colnames(rect_data)[3:8] <- c('Total Race','White','Black','American Indian','Asian','Other Race')
+
+colnames(rect_data)[9:11] <- c('Total Ethnicity','Not Hispanic or Latino','Hispanic or Latino')
+
+# caculate racial porprotion for each county 
+race <- data.frame("County" = rect_data[,2])
+for (i in 4:8) {
+  coname = colnames(rect_data)[i]
+  race <- cbind(race, (rect_data[,i]/rect_data[,3])[,1])
+  colnames(race)[i-1] <- coname
+}
+
+# Step2
+# Caculate the probability that two people are of the same race
+rsum <- rep(c(0),times = 3220)
+for (i in 3:6) {
+  rsum <- rsum + (race[,i])^2
+  print(rsum[1:10]) # for check
+}
+
+hw3 <- cbind(race,rsum)
+colnames(hw3)[8] <- '2_same_race_prob'
+
+# Step3
+ethnicity <- data.frame("County" = rect_data[,2])
+for (i in 10:11) {
+  coname = colnames(rect_data)[i]
+  ethnicity <- cbind(ethnicity, (rect_data[,i]/rect_data[,9])[,1])
+  colnames(ethnicity)[i-7] <- coname
+}
+
+# the probability that any two people will be Hispanic or not
+esum <- rep(c(0),times = 3220)
+for (i in 3:4) {
+  esum <- esum + (ethnicity[,i])^2
+  print(esum[1:10]) # for check
+}
+
+hw3 <- cbind(hw3,ethnicity[3:4],esum)
+colnames(hw3)[11] <- '2_same_ethnicity_prob'
+
+# Step4
+# calculate whether two people are the same on both measures
+both_prob <- esum * rsum
+hw3 <- cbind(hw3,both_prob)
+
+# Step5
+# calculate diveristy index
+diveristy_inx <- (1-both_prob)*100
+hw3 <- cbind(hw3,diveristy_inx)
+
+```
+
+### 6. Create a histogram of USA Today Diversity Index values. Describe the shape of the histogram in
+statistical terms (Hint: skewness).
+
+#### This histogram chart shows that the frequency of different range of diversity index.  "10-20" has the highest frequency (about 700).
+As for the shape, it is asymmatry and its distribution is skewed to the right ,which means that the mean of diversity index is less than the mode
+```{r}
+
+hist(hw3$diveristy_inx, main = "Histogram: \n USA Diversity Index", 
+     xlab = "Diversity Index", ylab = "Frequency", 
+     col = "firebrick", density = 75,
+     angle = 50, border = "black")
+```
+
+### 7. Create a visualization which compares the top 10 counties and their diversity index value using ggplot2.
+```{r}
+
+county_separated <- hw3 %>% 
+  separate(County.NAME, 
+           into=c("County", "State"), 
+           sep=",")
+
+county_separated <- county_separated %>% 
+  separate(County, 
+           into=c("County", "County2"), 
+           sep=" County")
+county_separated <- county_separated[,!(names(county_separated)=='County2')]
+
+top10di <- county_separated %>%
+  select(diveristy_inx,County) %>%
+  arrange(desc(diveristy_inx))
+
+ggplot(top10di[1:10,], aes(County,diveristy_inx,fill = County), xlab(NULL))+
+  geom_col()+ labs(fill = "County",title = 'Top 10 Diversity Index') + xlab("County") + ylab('Diversity Index')
+
+```
+
+### 8. Using the leaflet mapping library for R (or another mapping library of your choice), visualize the USA Today Diversity Index by county for New York, New Jersey and Connecticut.
+```{r}
+
+NYDI <- filter(county_separated, State == " New York")
+NJDI <- filter(county_separated, State == " New Jersey")
+CTDI <- filter(county_separated, State == " Connecticut")
+
+```
+
+### 10. Does there appear to be any relationship between geography and diversity? Which state appears to be
+the most diverse?
+
+#### Obviously, in general situation, the north of the three states has low diversity index(around 0~30). Also, mostly, counties with high diversity index are near sea areas.
+Compared with the other two states, New Jersey appreas to be the higest diversity index state.
+
+```{r}
+
+NY_NJ_CT_DI <- rbind(NYDI,NJDI,CTDI)
+NY_NJ_CT_DI1 <- NY_NJ_CT_DI[,4:13]
+NY_NJ_CT_DI <- NY_NJ_CT_DI[, !(names(NY_NJ_CT_DI)%in%names(NY_NJ_CT_DI1))]
+
+NNCmap <- leaflet(data = NY_NJ_CT_DI$County.geometry)
+NNCpal <- colorNumeric(
+  palette = "Reds",
+  domain = NY_NJ_CT_DI$diveristy_inx)
+NNClabels <- sprintf(
+  "<strong>%s</strong><br/>Diversity Index %g",
+  NY_NJ_CT_DI$County, NY_NJ_CT_DI$diveristy_inx
+) %>% lapply(htmltools::HTML)
+
+NNCmap %>%
+  addPolygons(
+  fillColor = NNCpal(NY_NJ_CT_DI$diveristy_inx),
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  dashArray = "3",
+  fillOpacity = 0.7,
+  highlight = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label =NNClabels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto"))%>%
+  addLegend("bottomright", pal = NNCpal, values = NY_NJ_CT_DI$diveristy_inx,
+    title = "Diversity Index")
+
+
+```
+
+
+### 11. Create a new data frame using the tidycensus API with data on median household income by county
+for New York, New Jersey and Connecticut. Join this data together with the data from New York
+County. Use ggplot2 (or another visualization library) to visualize the USA Today Diversity Index
+value and median household incomeon the same plot (Hint: try facet wrap!).
+
+#### The scatter plot shows that the diversity index is positivly correlated to the median income for New York and Connecticut. In New Jersey, there is a negative relationship between those two factors.
+
+```{r}
+median_income <- get_acs(geography = 'county', variables = 'B06011_001', geometry = TRUE, state=c('NY','NJ','CT'))
+
+income_no_moe <- median_income[,!(names(median_income)%in%drop)]
+income_rect_data <- income_no_moe %>% 
+  spread(variable, estimate)
+
+income_separete <- income_rect_data %>% 
+  separate(NAME, 
+           into=c("County", "State"), 
+           sep=",")
+
+income_separete <- income_separete %>% 
+  separate(County, 
+           into=c("County", "County2"), 
+           sep=" County")
+income_separete <- income_separete[,!(names(income_separete)=='County2')]
+
+
+join_income_DI <- merge(x=income_separete,y=NY_NJ_CT_DI, by = 'County', all.x = TRUE)
+colnames(join_income_DI)[3]<- 'State'
+
+
+a <- ggplot (join_income_DI, aes(x=B06011_001, y=diveristy_inx,color = State)) + geom_point(shape=1)+ geom_smooth(method = "lm")+
+  ggtitle("Scatter Plot: \n USA Diversity Index vs Median Income" )+ labs(x = "Median Income", y= "Diveristy Index")
+
+a + facet_grid(. ~State  )
+```
